@@ -12,10 +12,12 @@
 using namespace Gdiplus;
 
 // ------------------------------------------------------------------ 常量
-#define ITEM_W     36
-#define TB_HEIGHT  44
-#define TB_PAD     6
-#define ICON_BOX   22
+// 尺寸对齐微信截图工具条的比例：高度 48 时图标 20、格子 44、分隔 16
+#define ITEM_W     44
+#define TB_HEIGHT  48
+#define TB_PAD     4
+#define SEP_W      16
+#define ICON_BOX   20
 #define HANDLE_SZ  7
 #define HANDLE_HIT 12
 #define MIN_SEL    8
@@ -24,11 +26,21 @@ static const wchar_t* OV_CLASS = L"JianJieOverlay";
 static const UINT WM_JJ_OCR = WM_APP + 22;
 static const UINT WM_JJ_TRANS = WM_APP + 23;
 
-static Color C_BG(242, 31, 31, 31);
-static Color C_BORDER(20, 255, 255, 255);
-static Color C_HOVER(28, 255, 255, 255);
-static Color C_ACTIVE(46, 7, 193, 96);
-static Color C_ICON(255, 242, 242, 242);
+// 工具条走浅色：底色 #FAFAFA、图标 #4C4C4C、分隔线 #E0E0E0，
+// 与微信截图一致（浮在压暗的桌面上，浅色反而更清楚）。
+static Color C_TB_BG(255, 250, 250, 250);
+static Color C_TB_EDGE(255, 226, 226, 226);
+static Color C_TB_LINE(255, 224, 224, 224);
+static Color C_TB_ICON(255, 76, 76, 76);
+static Color C_TB_HOVER(255, 236, 236, 236);
+static Color C_TB_SEL_BG(255, 231, 248, 239);
+static Color C_TB_SEL_ICON(255, 7, 193, 96);
+static Color C_TB_OFF(255, 208, 208, 208);
+static Color C_TB_RED(255, 250, 81, 81);
+static Color C_TB_RED_BG(255, 255, 240, 240);
+static Color C_TB_GREEN(255, 0, 195, 117);
+static Color C_TB_GREEN_BG(255, 232, 249, 241);
+
 static Color C_GREEN(255, 7, 193, 96);
 static Color C_LABEL_BG(170, 0, 0, 0);
 
@@ -116,6 +128,17 @@ static Bitmap* ensure_mosaic(Overlay* o) {
 }
 
 // ------------------------------------------------------------------ 图标
+// 微信截图的图标是 1.5px 细线、20×20 见方、深灰 #4C4C4C。
+// 这里统一在 20×20 的虚拟画布上量坐标，再按实际盒子等比缩放，
+// 换尺寸或换 DPI 都不用重算一堆偏移量。
+struct Ink {
+    float x = 0, y = 0, u = 1;
+    explicit Ink(const RectF& a) : x(a.X), y(a.Y), u(a.Width / 20.0f) {}
+    float X(float v) const { return x + v * u; }
+    float Y(float v) const { return y + v * u; }
+    float S(float v) const { return v * u; }
+};
+
 static void setup_icon_pen(Pen& pen, Color c, float w) {
     pen.SetColor(c);
     pen.SetWidth(w);
@@ -123,202 +146,241 @@ static void setup_icon_pen(Pen& pen, Color c, float w) {
     pen.SetLineJoin(LineJoinRound);
 }
 
+static void ink_pen(Pen& pen, Color c, const Ink& k, float w = 1.5f) {
+    setup_icon_pen(pen, c, k.S(w));
+}
+
+static void round_path(GraphicsPath& p, const RectF& r, float rad) {
+    p.AddArc(r.X, r.Y, rad * 2, rad * 2, 180, 90);
+    p.AddArc(r.X + r.Width - rad * 2, r.Y, rad * 2, rad * 2, 270, 90);
+    p.AddArc(r.X + r.Width - rad * 2, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 0, 90);
+    p.AddArc(r.X, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 90, 90);
+    p.CloseFigure();
+}
+
+// 在图标里居中写一个小字（翻译图标的 A / 文）
+static void ink_glyph(Graphics& g, const Ink& k, const wchar_t* s, float size,
+                      float cx, float cy, Color c) {
+    Font f(FONT_UI(), k.S(size), FontStyleRegular, UnitPixel);
+    StringFormat fmt;
+    fmt.SetAlignment(StringAlignmentCenter);
+    fmt.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush br(c);
+    RectF box(k.X(cx) - k.S(6.0f), k.Y(cy) - k.S(5.0f), k.S(12.0f), k.S(10.0f));
+    g.DrawString(s, -1, &f, box, &fmt, &br);
+}
+
 static void i_rect(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.8f));
-    float dx = SF(2.5f), dy = SF(4.5f);
-    g.DrawRectangle(&pen, a.X + dx, a.Y + dy, a.Width - dx * 2, a.Height - dy * 2);
+    ink_pen(pen, c, k);
+    GraphicsPath p;
+    round_path(p, RectF(k.X(3.2f), k.Y(3.6f), k.S(13.6f), k.S(12.8f)), k.S(2.0f));
+    g.DrawPath(&pen, &p);
 }
 
 static void i_ellipse(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.8f));
-    float dx = SF(2.5f), dy = SF(4.5f);
-    g.DrawEllipse(&pen, a.X + dx, a.Y + dy, a.Width - dx * 2, a.Height - dy * 2);
+    ink_pen(pen, c, k);
+    g.DrawEllipse(&pen, k.X(3.2f), k.Y(3.2f), k.S(13.6f), k.S(13.6f));
 }
 
 static void i_arrow(Graphics& g, const RectF& a, Color c) {
-    float x0 = a.X + SF(3.5f), y0 = a.Y + a.Height - SF(3.5f);
-    float x1 = a.X + a.Width - SF(4.0f), y1 = a.Y + SF(4.0f);
-    float ang = atan2f(y1 - y0, x1 - x0);
-    float head = SF(6.4f);
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.9f));
-    g.DrawLine(&pen, PointF(x0, y0), PointF(x1 - head * 0.6f * cosf(ang),
-                                            y1 - head * 0.6f * sinf(ang)));
-    SolidBrush br(c);
-    PointF tri[3] = {
-        PointF(x1, y1),
-        PointF(x1 - head * cosf(ang - 0.42f), y1 - head * sinf(ang - 0.42f)),
-        PointF(x1 - head * cosf(ang + 0.42f), y1 - head * sinf(ang + 0.42f)),
-    };
-    g.FillPolygon(&br, tri, 3);
+    ink_pen(pen, c, k, 1.6f);
+    const float x0 = k.X(4.0f), y0 = k.Y(16.4f);
+    const float x1 = k.X(16.2f), y1 = k.Y(4.2f);
+    const float ang = atan2f(y1 - y0, x1 - x0);
+    const float L = k.S(5.4f);
+    g.DrawLine(&pen, PointF(x0, y0), PointF(x1, y1));
+    g.DrawLine(&pen, PointF(x1, y1),
+               PointF(x1 - L * cosf(ang - 0.5f), y1 - L * sinf(ang - 0.5f)));
+    g.DrawLine(&pen, PointF(x1, y1),
+               PointF(x1 - L * cosf(ang + 0.5f), y1 - L * sinf(ang + 0.5f)));
 }
 
 static void i_pen(Graphics& g, const RectF& a, Color c) {
-    GraphicsPath path;
-    path.AddBezier(PointF(a.X + SF(3.0f), a.Y + a.Height - SF(4.0f)),
-                   PointF(a.X + SF(6.0f), a.Y + SF(2.0f)),
-                   PointF(a.X + SF(11.0f), a.Y + a.Height - SF(1.0f)),
-                   PointF(a.X + SF(13.0f), a.Y + SF(6.0f)));
-    path.AddBezier(PointF(a.X + SF(13.0f), a.Y + SF(6.0f)),
-                   PointF(a.X + SF(15.0f), a.Y + SF(3.0f)),
-                   PointF(a.X + SF(17.5f), a.Y + SF(5.0f)),
-                   PointF(a.X + a.Width - SF(2.5f), a.Y + SF(3.0f)));
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.9f));
-    g.DrawPath(&pen, &path);
+    ink_pen(pen, c, k);
+    GraphicsPath p;
+    p.AddLine(k.X(3.4f), k.Y(16.6f), k.X(5.4f), k.Y(11.2f));
+    p.AddLine(k.X(5.4f), k.Y(11.2f), k.X(13.0f), k.Y(3.6f));
+    p.AddLine(k.X(13.0f), k.Y(3.6f), k.X(16.4f), k.Y(7.0f));
+    p.AddLine(k.X(16.4f), k.Y(7.0f), k.X(8.8f), k.Y(14.6f));
+    p.CloseFigure();
+    g.DrawPath(&pen, &p);
+    g.DrawLine(&pen, k.X(5.4f), k.Y(11.2f), k.X(8.8f), k.Y(14.6f));   // 笔尖分界
 }
 
 static void i_mosaic(Graphics& g, const RectF& a, Color c) {
-    SolidBrush br(c);
-    float cell = SF(5.0f), gap = SF(1.2f);
-    float x0 = a.X + SF(2.5f), y0 = a.Y + SF(2.5f);
-    for (int row = 0; row < 3; ++row) {
-        for (int col = 0; col < 3; ++col) {
-            if ((row + col) % 2 == 0) continue;
-            g.FillRectangle(&br, x0 + col * (cell + gap), y0 + row * (cell + gap), cell, cell);
-        }
+    Ink k(a);
+    Pen pen(Color(255, 0, 0, 0), 1);
+    ink_pen(pen, c, k);
+    const RectF box(k.X(3.0f), k.Y(3.0f), k.S(14.0f), k.S(14.0f));
+    const float cell = k.S(3.0f), step = k.S(3.5f);
+    {
+        GraphicsState st = g.Save();
+        GraphicsPath clip;
+        round_path(clip, box, k.S(1.6f));
+        g.SetClip(&clip);
+        SolidBrush br(c);
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                if ((row + col) % 2 == 0)
+                    g.FillRectangle(&br, box.X + col * step, box.Y + row * step, cell, cell);
+        g.Restore(st);
     }
+    GraphicsPath p;
+    round_path(p, box, k.S(1.6f));
+    g.DrawPath(&pen, &p);
 }
 
 static void i_text(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(2.0f));
-    float cx = a.X + a.Width / 2;
-    g.DrawLine(&pen, PointF(a.X + SF(5.0f), a.Y + SF(6.0f)),
-               PointF(a.X + a.Width - SF(5.0f), a.Y + SF(6.0f)));
-    g.DrawLine(&pen, PointF(cx, a.Y + SF(6.0f)), PointF(cx, a.Y + a.Height - SF(4.5f)));
+    ink_pen(pen, c, k);
+    GraphicsPath p;
+    round_path(p, RectF(k.X(3.0f), k.Y(3.0f), k.S(14.0f), k.S(14.0f)), k.S(2.0f));
+    g.DrawPath(&pen, &p);
+    g.DrawLine(&pen, k.X(6.6f), k.Y(6.8f), k.X(13.4f), k.Y(6.8f));
+    g.DrawLine(&pen, k.X(10.0f), k.Y(6.8f), k.X(10.0f), k.Y(14.2f));
 }
 
 static void i_number(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.7f));
-    float d = SF(3.5f);
-    g.DrawEllipse(&pen, a.X + d, a.Y + d, a.Width - d * 2, a.Height - d * 2);
-    float cx = a.X + a.Width / 2, cy = a.Y + a.Height / 2;
-    Pen pen2(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen2, c, SF(1.5f));
-    g.DrawLine(&pen2, PointF(cx - SF(1.6f), cy - SF(2.6f)), PointF(cx, cy - SF(4.2f)));
-    g.DrawLine(&pen2, PointF(cx, cy - SF(4.2f)), PointF(cx, cy + SF(4.2f)));
+    ink_pen(pen, c, k);
+    g.DrawEllipse(&pen, k.X(3.0f), k.Y(3.0f), k.S(14.0f), k.S(14.0f));
+    g.DrawLine(&pen, k.X(8.6f), k.Y(7.6f), k.X(10.2f), k.Y(6.2f));
+    g.DrawLine(&pen, k.X(10.2f), k.Y(6.2f), k.X(10.2f), k.Y(13.8f));
 }
 
+// 翻译：两个错开的圆角方框，后面的写 A，前面的写 文
+static void i_trans(Graphics& g, const RectF& a, Color c, Color bg) {
+    Ink k(a);
+    Pen pen(Color(255, 0, 0, 0), 1);
+    ink_pen(pen, c, k, 1.3f);
+
+    const RectF back(k.X(7.6f), k.Y(2.4f), k.S(9.4f), k.S(7.8f));
+    GraphicsPath pb;
+    round_path(pb, back, k.S(1.5f));
+    g.DrawPath(&pen, &pb);
+    ink_glyph(g, k, L"A", 7.4f, 12.3f, 6.3f, c);
+
+    const RectF front(k.X(3.0f), k.Y(9.4f), k.S(9.4f), k.S(7.8f));
+    GraphicsPath pf;
+    round_path(pf, front, k.S(1.5f));
+    SolidBrush fill(bg);          // 用底色盖掉后面方框的重叠部分
+    g.FillPath(&fill, &pf);
+    g.DrawPath(&pen, &pf);
+    ink_glyph(g, k, L"文", 7.4f, 7.7f, 13.3f, c);
+}
+
+// 提取文字：虚线扫描框 + 文
+static void i_ocr(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
+    Pen pen(Color(255, 0, 0, 0), 1);
+    ink_pen(pen, c, k, 1.4f);
+    const float L = k.X(3.0f), T = k.Y(3.0f), R = k.X(17.0f), B = k.Y(17.0f);
+    const float arm = k.S(5.2f);
+    // 四角括号，每边中间留缺口 —— 微信那个「虚线扫描框」的样子
+    g.DrawLine(&pen, L, T + arm, L, T);
+    g.DrawLine(&pen, L, T, L + arm, T);
+    g.DrawLine(&pen, R - arm, T, R, T);
+    g.DrawLine(&pen, R, T, R, T + arm);
+    g.DrawLine(&pen, R, B - arm, R, B);
+    g.DrawLine(&pen, R, B, R - arm, B);
+    g.DrawLine(&pen, L + arm, B, L, B);
+    g.DrawLine(&pen, L, B, L, B - arm);
+    ink_glyph(g, k, L"文", 8.0f, 10.0f, 10.0f, c);
+}
+
+// 撤销：底部一条短横当尾巴，绕右侧兜上去，箭头收在左上方朝左
 static void i_undo(Graphics& g, const RectF& a, Color c) {
-    float l = a.X + SF(4.0f), t = a.Y + SF(5.0f);
-    float w = a.Width - SF(8.0f), h = a.Height - SF(10.0f);
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.8f));
-    g.DrawArc(&pen, l, t, w, h, 40.0f, 270.0f);
-    SolidBrush br(c);
-    float cy = t + h / 2;
-    PointF tri[3] = {PointF(l - SF(0.5f), cy - SF(3.0f)),
-                     PointF(l + SF(5.0f), cy - SF(3.0f)),
-                     PointF(l + SF(2.2f), cy + SF(2.0f))};
-    g.FillPolygon(&br, tri, 3);
+    ink_pen(pen, c, k);
+    // 圆心 (10.5,10.5) 半径 5.2：从正下方逆时针扫 250°，绕右侧到左上
+    g.DrawArc(&pen, k.X(5.3f), k.Y(5.3f), k.S(10.4f), k.S(10.4f), 90.0f, -250.0f);
+    g.DrawLine(&pen, k.X(4.4f), k.Y(15.7f), k.X(10.5f), k.Y(15.7f));
+    g.DrawLine(&pen, k.X(5.6f), k.Y(8.7f), k.X(9.6f), k.Y(7.2f));
+    g.DrawLine(&pen, k.X(5.6f), k.Y(8.7f), k.X(9.6f), k.Y(10.4f));
 }
 
+// 保存：圆角方框（顶边留缺口）+ 一支粗箭头插进去
 static void i_save(Graphics& g, const RectF& a, Color c) {
-    float cx = a.X + a.Width / 2;
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.8f));
-    g.DrawLine(&pen, PointF(cx, a.Y + SF(3.5f)), PointF(cx, a.Y + a.Height - SF(8.0f)));
+    ink_pen(pen, c, k, 1.5f);
+    GraphicsPath p;
+    p.AddArc(k.X(12.4f), k.Y(5.0f), k.S(4.2f), k.S(4.2f), 270, 90);   // 右上角
+    p.AddLine(k.X(16.6f), k.Y(7.1f), k.X(16.6f), k.Y(14.4f));          // 右
+    p.AddArc(k.X(12.4f), k.Y(12.3f), k.S(4.2f), k.S(4.2f), 0, 90);     // 右下角
+    p.AddLine(k.X(14.5f), k.Y(16.5f), k.X(5.5f), k.Y(16.5f));          // 下
+    p.AddArc(k.X(3.4f), k.Y(12.3f), k.S(4.2f), k.S(4.2f), 90, 90);     // 左下角
+    p.AddLine(k.X(3.4f), k.Y(14.4f), k.X(3.4f), k.Y(7.1f));            // 左
+    p.AddArc(k.X(3.4f), k.Y(5.0f), k.S(4.2f), k.S(4.2f), 180, 90);     // 左上角
+    p.AddLine(k.X(5.5f), k.Y(5.0f), k.X(7.6f), k.Y(5.0f));             // 上边左段
+    g.DrawPath(&pen, &p);
+
+    Pen shaft(Color(255, 0, 0, 0), 1);
+    ink_pen(shaft, c, k, 1.8f);
+    g.DrawLine(&shaft, k.X(10.0f), k.Y(2.2f), k.X(10.0f), k.Y(10.8f));
     SolidBrush br(c);
-    PointF tri[3] = {PointF(cx, a.Y + a.Height - SF(5.0f)),
-                     PointF(cx - SF(4.0f), a.Y + a.Height - SF(10.0f)),
-                     PointF(cx + SF(4.0f), a.Y + a.Height - SF(10.0f))};
+    PointF tri[3] = {PointF(k.X(10.0f), k.Y(14.4f)),
+                     PointF(k.X(7.2f), k.Y(10.9f)),
+                     PointF(k.X(12.8f), k.Y(10.9f))};
     g.FillPolygon(&br, tri, 3);
-    g.DrawLine(&pen, PointF(a.X + SF(4.0f), a.Y + a.Height - SF(3.0f)),
-               PointF(a.X + a.Width - SF(4.0f), a.Y + a.Height - SF(3.0f)));
 }
 
-static void i_copy(Graphics& g, const RectF& a, Color c) {
+// 复制：两个错开的圆角方框
+static void i_copy(Graphics& g, const RectF& a, Color c, Color bg) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.6f));
-    float r = SF(2.0f);
+    ink_pen(pen, c, k, 1.4f);
     GraphicsPath p1, p2;
-    float w1 = SF(11.0f), h1 = SF(11.0f);
-    auto round_rect = [&](GraphicsPath& p, float x, float y, float w, float h) {
-        p.AddArc(x, y, r * 2, r * 2, 180, 90);
-        p.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
-        p.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90);
-        p.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
-        p.CloseFigure();
-    };
-    round_rect(p1, a.X + SF(3.0f), a.Y + SF(3.0f), w1, h1);
-    round_rect(p2, a.X + SF(7.0f), a.Y + SF(7.5f), w1, h1);
+    round_path(p1, RectF(k.X(3.2f), k.Y(3.2f), k.S(10.4f), k.S(10.4f)), k.S(1.6f));
+    round_path(p2, RectF(k.X(6.4f), k.Y(6.4f), k.S(10.4f), k.S(10.4f)), k.S(1.6f));
     g.DrawPath(&pen, &p1);
+    SolidBrush fill(bg);
+    g.FillPath(&fill, &p2);
     g.DrawPath(&pen, &p2);
 }
 
+// 贴图：图钉（圆头、收腰、横杠、针）
 static void i_pin(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.6f));
-    float r = SF(2.0f);
+    ink_pen(pen, c, k);
     GraphicsPath p;
-    float x = a.X + SF(3.0f), y = a.Y + SF(5.5f), w = SF(13.0f), h = SF(11.0f);
-    p.AddArc(x, y, r * 2, r * 2, 180, 90);
-    p.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
-    p.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90);
-    p.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
-    p.CloseFigure();
-    g.DrawPath(&pen, &p);
-
-    Pen pen2(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen2, c, SF(1.5f));
-    g.DrawLine(&pen2, PointF(a.X + SF(5.5f), a.Y + SF(13.0f)),
-               PointF(a.X + SF(9.5f), a.Y + SF(8.5f)));
-    SolidBrush br(c);
-    float rr = SF(2.6f);
-    g.FillEllipse(&br, a.X + SF(15.0f) - rr, a.Y + SF(4.5f) - rr, rr * 2, rr * 2);
+    p.AddLine(k.X(6.6f), k.Y(9.8f), k.X(8.4f), k.Y(5.0f));
+    p.AddBezier(PointF(k.X(8.4f), k.Y(5.0f)), PointF(k.X(8.4f), k.Y(2.5f)),
+                PointF(k.X(11.6f), k.Y(2.5f)), PointF(k.X(11.6f), k.Y(5.0f)));
+    p.AddLine(k.X(11.6f), k.Y(5.0f), k.X(13.4f), k.Y(9.8f));
+    g.DrawPath(&pen, &p);                                           // 钟形头，底边敞口
+    g.DrawLine(&pen, k.X(5.6f), k.Y(9.8f), k.X(14.4f), k.Y(9.8f));  // 横杠
+    g.DrawLine(&pen, k.X(10.0f), k.Y(9.8f), k.X(10.0f), k.Y(16.8f)); // 针
 }
 
 static void i_cancel(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.9f));
-    g.DrawLine(&pen, PointF(a.X + SF(5.5f), a.Y + SF(5.5f)),
-               PointF(a.X + a.Width - SF(5.5f), a.Y + a.Height - SF(5.5f)));
-    g.DrawLine(&pen, PointF(a.X + a.Width - SF(5.5f), a.Y + SF(5.5f)),
-               PointF(a.X + SF(5.5f), a.Y + a.Height - SF(5.5f)));
+    ink_pen(pen, c, k, 1.9f);
+    g.DrawLine(&pen, k.X(5.4f), k.Y(5.4f), k.X(14.6f), k.Y(14.6f));
+    g.DrawLine(&pen, k.X(14.6f), k.Y(5.4f), k.X(5.4f), k.Y(14.6f));
 }
 
-static void i_ocr(Graphics& g, const RectF& a, Color c) {
-    float L = a.X + SF(3.0f), T = a.Y + SF(3.0f);
-    float R = a.X + a.Width - SF(3.0f), B = a.Y + a.Height - SF(3.0f);
-    float k = SF(4.6f);
+static void i_confirm(Graphics& g, const RectF& a, Color c) {
+    Ink k(a);
     Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.7f));
-    g.DrawLine(&pen, PointF(L, T + k), PointF(L, T));
-    g.DrawLine(&pen, PointF(L, T), PointF(L + k, T));
-    g.DrawLine(&pen, PointF(R - k, T), PointF(R, T));
-    g.DrawLine(&pen, PointF(R, T), PointF(R, T + k));
-    g.DrawLine(&pen, PointF(R, B - k), PointF(R, B));
-    g.DrawLine(&pen, PointF(R, B), PointF(R - k, B));
-    g.DrawLine(&pen, PointF(L + k, B), PointF(L, B));
-    g.DrawLine(&pen, PointF(L, B), PointF(L, B - k));
-
-    float cx = a.X + a.Width / 2, cy = a.Y + a.Height / 2;
-    Pen pen2(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen2, c, SF(1.6f));
-    g.DrawLine(&pen2, PointF(cx - SF(4.2f), cy - SF(3.6f)), PointF(cx + SF(4.2f), cy - SF(3.6f)));
-    g.DrawLine(&pen2, PointF(cx, cy - SF(3.6f)), PointF(cx, cy + SF(4.0f)));
-}
-
-static void i_trans(Graphics& g, const RectF& a, Color c) {
-    float cx = a.X + SF(6.6f), top = a.Y + SF(5.2f);
-    Pen pen(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen, c, SF(1.45f));
-    SolidBrush br(c);
-    g.FillEllipse(&br, cx - SF(1.0f), top - SF(1.0f), SF(2.0f), SF(2.0f));
-    g.DrawLine(&pen, PointF(cx - SF(4.0f), top + SF(3.2f)), PointF(cx + SF(4.0f), top + SF(3.2f)));
-    g.DrawLine(&pen, PointF(cx - SF(3.4f), top + SF(6.0f)), PointF(cx + SF(3.4f), top + SF(11.2f)));
-    g.DrawLine(&pen, PointF(cx + SF(3.4f), top + SF(6.0f)), PointF(cx - SF(3.4f), top + SF(11.2f)));
-
-    float bx = a.X + a.Width - SF(6.4f), btop = a.Y + SF(5.6f);
-    Pen pen2(Color(255, 0, 0, 0), 1);
-    setup_icon_pen(pen2, c, SF(1.55f));
-    g.DrawLine(&pen2, PointF(bx - SF(3.6f), btop + SF(10.4f)), PointF(bx, btop));
-    g.DrawLine(&pen2, PointF(bx, btop), PointF(bx + SF(3.6f), btop + SF(10.4f)));
-    g.DrawLine(&pen2, PointF(bx - SF(2.0f), btop + SF(6.4f)), PointF(bx + SF(2.0f), btop + SF(6.4f)));
+    ink_pen(pen, c, k, 1.9f);
+    GraphicsPath p;
+    p.AddLine(k.X(4.6f), k.Y(10.6f), k.X(8.4f), k.Y(14.4f));
+    p.AddLine(k.X(8.4f), k.Y(14.4f), k.X(15.6f), k.Y(5.8f));
+    g.DrawPath(&pen, &p);
 }
 
 // ------------------------------------------------------------------ 工具条
@@ -333,32 +395,35 @@ static const ToolDef TOOL_DEFS[] = {
     {T_TEXT,    L"文字  T"},
     {T_NUMBER,  L"序号  N"},
     {T_SEP,     L""},
-    {T_OCR,     L"提取文字  O"},
     {T_TRANS,   L"翻译  F"},
+    {T_OCR,     L"提取文字  O"},
     {T_COLOR,   L"标注颜色  C"},
     {T_SEP,     L""},
     {T_UNDO,    L"撤销  Ctrl+Z"},
     {T_SAVE,    L"保存  Ctrl+S"},
-    {T_COPY,    L"复制  Enter"},
     {T_PIN,     L"贴图  Ctrl+T"},
+    {T_COPY,    L"复制并退出  Enter"},
     {T_CANCEL,  L"取消  Esc"},
+    {T_CONFIRM, L"完成  Enter"},
 };
 static const int N_TOOLS = (int)(sizeof(TOOL_DEFS) / sizeof(TOOL_DEFS[0]));
 
+// 每个格子占满整条高度，命中测试直接拿格子矩形比，不用再算图标偏移
 static void layout_toolbar(Overlay* o) {
     o->items.clear();
-    float x = SF((float)TB_PAD);
-    float h = SF((float)TB_HEIGHT);
-    float iw = SF((float)ITEM_W);
+    const float x0 = SF((float)TB_PAD);
+    const float h = SF((float)TB_HEIGHT);
+    float x = x0;
     for (int i = 0; i < N_TOOLS; ++i) {
         ToolItem it;
         it.id = TOOL_DEFS[i].id;
         if (it.id == T_SEP) {
-            it.rect = RectF(x + SF(2.0f), SF(10.0f), 1.0f, h - SF(20.0f));
-            x += SF(5.0f);
+            it.rect = RectF(x + SF((float)SEP_W) / 2 - 0.5f, SF(14.0f),
+                            1.0f, h - SF(28.0f));
+            x += SF((float)SEP_W);
         } else {
-            it.rect = RectF(x, (h - iw) / 2 + SF(4.0f), iw, iw - SF(4.0f));
-            x += iw;
+            it.rect = RectF(x, 0.0f, SF((float)ITEM_W), h);
+            x += SF((float)ITEM_W);
         }
         o->items.push_back(it);
     }
@@ -366,9 +431,8 @@ static void layout_toolbar(Overlay* o) {
 
 static float toolbar_width() {
     float w = SF((float)TB_PAD) * 2;
-    for (int i = 0; i < N_TOOLS; ++i) {
-        w += (TOOL_DEFS[i].id == T_SEP) ? SF(5.0f) : SF((float)ITEM_W);
-    }
+    for (int i = 0; i < N_TOOLS; ++i)
+        w += (TOOL_DEFS[i].id == T_SEP) ? SF((float)SEP_W) : SF((float)ITEM_W);
     return w;
 }
 
@@ -402,84 +466,69 @@ static void place_toolbar(Overlay* o) {
 
 static int toolbar_hit(Overlay* o, POINT pt) {
     if (!o->tbVisible) return -1;
-    float lx = (float)pt.x - o->tbX;
-    float ly = (float)pt.y - o->tbY;
+    const float lx = (float)pt.x - o->tbX;
+    const float ly = (float)pt.y - o->tbY;
     for (size_t i = 0; i < o->items.size(); ++i) {
         if (o->items[i].id == T_SEP) continue;
-        RectF r = o->items[i].rect;
-        r.X -= SF(2.0f); r.Y -= SF(4.0f);
-        r.Width += SF(4.0f); r.Height += SF(8.0f);
-        if (ptInRectF(r, lx, ly)) return (int)i;
+        if (ptInRectF(o->items[i].rect, lx, ly)) return (int)i;
     }
     return -1;
 }
 
 static void draw_toolbar(Graphics& g, Overlay* o) {
     if (!o->tbVisible) return;
-    float w = toolbar_width();
-    float h = SF((float)TB_HEIGHT);
+    const float w = toolbar_width();
+    const float h = SF((float)TB_HEIGHT);
     GraphicsState st = g.Save();
     g.TranslateTransform(o->tbX, o->tbY);
 
+    // 白底圆角条 + 一圈浅灰描边
     {
         GraphicsPath path;
-        float r = SF(9.0f);
-        path.AddArc(0.5f, 0.5f, r * 2, r * 2, 180, 90);
-        path.AddArc(w - r * 2 - 0.5f, 0.5f, r * 2, r * 2, 270, 90);
-        path.AddArc(w - r * 2 - 0.5f, h - r * 2 - 0.5f, r * 2, r * 2, 0, 90);
-        path.AddArc(0.5f, h - r * 2 - 0.5f, r * 2, r * 2, 90, 90);
-        path.CloseFigure();
-        SolidBrush bg(C_BG);
+        round_path(path, RectF(0.5f, 0.5f, w - 1.0f, h - 1.0f), SF(6.0f));
+        SolidBrush bg(C_TB_BG);
         g.FillPath(&bg, &path);
-        Pen border(C_BORDER, 1.0f);
+        Pen border(C_TB_EDGE, 1.0f);
         g.DrawPath(&border, &path);
     }
 
     for (size_t i = 0; i < o->items.size(); ++i) {
-        auto& it = o->items[i];
+        const auto& it = o->items[i];
         if (it.id == T_SEP) {
-            Pen pen(Color(26, 255, 255, 255), 1.0f);
-            g.DrawLine(&pen, it.rect.X, it.rect.Y + SF(2.0f), it.rect.X, it.rect.Y + it.rect.Height - SF(2.0f));
+            Pen pen(C_TB_LINE, 1.0f);
+            g.DrawLine(&pen, it.rect.X + 0.5f, it.rect.Y,
+                       it.rect.X + 0.5f, it.rect.Y + it.rect.Height);
             continue;
         }
 
-        RectF cell = it.rect;
-        if ((int)i == o->hoverItem) {
-            SolidBrush br(C_HOVER);
-            RectF r(cell.X - SF(1.0f), cell.Y - SF(2.0f), cell.Width + SF(2.0f), cell.Height + SF(4.0f));
-            GraphicsPath p;
-            float rad = SF(6.0f);
-            p.AddArc(r.X, r.Y, rad * 2, rad * 2, 180, 90);
-            p.AddArc(r.X + r.Width - rad * 2, r.Y, rad * 2, rad * 2, 270, 90);
-            p.AddArc(r.X + r.Width - rad * 2, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 0, 90);
-            p.AddArc(r.X, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 90, 90);
-            p.CloseFigure();
-            g.FillPath(&br, &p);
+        const RectF cell = it.rect;
+        const bool off = (it.id == T_UNDO && o->anns.empty());   // 没东西可撤就置灰
+        const bool hover = (!off && (int)i == o->hoverItem);
+        const bool active = (o->tool == it.id);
+
+        if (hover || active) {
+            Color fill = C_TB_HOVER;
+            if (active) fill = C_TB_SEL_BG;
+            else if (it.id == T_CANCEL) fill = C_TB_RED_BG;
+            else if (it.id == T_CONFIRM) fill = C_TB_GREEN_BG;
+            GraphicsPath hp;
+            round_path(hp, RectF(cell.X + SF(2.0f), cell.Y + SF(5.0f),
+                                 cell.Width - SF(4.0f), cell.Height - SF(10.0f)),
+                       SF(6.0f));
+            SolidBrush br(fill);
+            g.FillPath(&br, &hp);
         }
 
-        Color ic = C_ICON;
-        if (o->tool == it.id) {
-            SolidBrush br(C_ACTIVE);
-            RectF r(cell.X - SF(1.0f), cell.Y - SF(2.0f), cell.Width + SF(2.0f), cell.Height + SF(4.0f));
-            GraphicsPath p;
-            float rad = SF(6.0f);
-            p.AddArc(r.X, r.Y, rad * 2, rad * 2, 180, 90);
-            p.AddArc(r.X + r.Width - rad * 2, r.Y, rad * 2, rad * 2, 270, 90);
-            p.AddArc(r.X + r.Width - rad * 2, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 0, 90);
-            p.AddArc(r.X, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 90, 90);
-            p.CloseFigure();
-            g.FillPath(&br, &p);
-            ic = C_GREEN;
-        }
-        if ((int)i == o->hoverItem) {
-            if (it.id == T_UNDO || it.id == T_SAVE || it.id == T_COPY ||
-                it.id == T_PIN || it.id == T_CANCEL || it.id == T_OCR || it.id == T_TRANS) {
-                ic = Color(255, 255, 255, 255);
-            }
-        }
+        Color ic = C_TB_ICON;
+        if (off) ic = C_TB_OFF;
+        else if (active) ic = C_TB_SEL_ICON;
+        else if (it.id == T_CANCEL) ic = C_TB_RED;
+        else if (it.id == T_CONFIRM) ic = C_TB_GREEN;
 
-        float box = SF((float)ICON_BOX);
-        RectF a(cell.X + cell.Width / 2 - box / 2, cell.Y + cell.Height / 2 - box / 2, box, box);
+        const Color cellBg = active ? C_TB_SEL_BG : (hover ? C_TB_HOVER : C_TB_BG);
+        const float box = SF((float)ICON_BOX);
+        const RectF a(cell.X + (cell.Width - box) / 2,
+                      cell.Y + (cell.Height - box) / 2, box, box);
 
         switch (it.id) {
         case T_RECT:    i_rect(g, a, ic); break;
@@ -489,20 +538,21 @@ static void draw_toolbar(Graphics& g, Overlay* o) {
         case T_MOSAIC:  i_mosaic(g, a, ic); break;
         case T_TEXT:    i_text(g, a, ic); break;
         case T_NUMBER:  i_number(g, a, ic); break;
+        case T_TRANS:   i_trans(g, a, ic, cellBg); break;
         case T_OCR:     i_ocr(g, a, ic); break;
-        case T_TRANS:   i_trans(g, a, ic); break;
         case T_UNDO:    i_undo(g, a, ic); break;
         case T_SAVE:    i_save(g, a, ic); break;
-        case T_COPY:    i_copy(g, a, ic); break;
+        case T_COPY:    i_copy(g, a, ic, cellBg); break;
         case T_PIN:     i_pin(g, a, ic); break;
         case T_CANCEL:  i_cancel(g, a, ic); break;
+        case T_CONFIRM: i_confirm(g, a, ic); break;
         case T_COLOR: {
-            Pen pen(Color(190, 255, 255, 255), SF(1.3f));
+            Pen ring(Color(255, 210, 210, 210), SF(1.2f));
             SolidBrush br(PALETTE[o->colorIdx]);
-            float d = SF(5.5f);
-            g.DrawEllipse(&pen, a.X + d, a.Y + d, a.Width - d * 2, a.Height - d * 2);
-            g.FillEllipse(&br, a.X + d + SF(1.2f), a.Y + d + SF(1.2f),
-                          a.Width - d * 2 - SF(2.4f), a.Height - d * 2 - SF(2.4f));
+            const float d = SF(5.0f);
+            g.DrawEllipse(&ring, a.X + d, a.Y + d, a.Width - d * 2, a.Height - d * 2);
+            g.FillEllipse(&br, a.X + d + SF(1.4f), a.Y + d + SF(1.4f),
+                          a.Width - d * 2 - SF(2.8f), a.Height - d * 2 - SF(2.8f));
             break;
         }
         default: break;
@@ -516,15 +566,19 @@ static void draw_toolbar(Graphics& g, Overlay* o) {
             Font font(FONT_UI(), SF(12.0f), FontStyleRegular, UnitPixel);
             RectF bounds;
             g.MeasureString(tip, -1, &font, PointF(0, 0), &bounds);
-            float tw = bounds.Width + SF(12.0f);
-            float th = bounds.Height + SF(4.0f);
-            float tx = o->items[o->hoverItem].rect.X + o->items[o->hoverItem].rect.Width / 2 - tw / 2;
-            float ty = -th - SF(8.0f);
-            if (o->tbY + ty < 2) ty = h + SF(8.0f);   // 顶部放不下就翻到下面
-            tx = std::max(-o->tbX + 2.0f, std::min(tx, (float)o->shot.vw - o->tbX - tw - 2.0f));
-            SolidBrush bg(Color(235, 20, 20, 20));
-            g.FillRectangle(&bg, tx, ty, tw, th);
-            SolidBrush fg(Color(255, 235, 235, 235));
+            const float tw = bounds.Width + SF(14.0f);
+            const float th = bounds.Height + SF(6.0f);
+            float tx = o->items[o->hoverItem].rect.X +
+                       o->items[o->hoverItem].rect.Width / 2 - tw / 2;
+            float ty = -th - SF(6.0f);
+            if (o->tbY + ty < 2) ty = h + SF(6.0f);   // 顶部放不下就翻到下面
+            tx = std::max(-o->tbX + 2.0f,
+                          std::min(tx, (float)o->shot.vw - o->tbX - tw - 2.0f));
+            GraphicsPath tp;
+            round_path(tp, RectF(tx, ty, tw, th), SF(4.0f));
+            SolidBrush bg(Color(240, 58, 58, 58));
+            g.FillPath(&bg, &tp);
+            SolidBrush fg(Color(255, 245, 245, 245));
             StringFormat fmt;
             fmt.SetAlignment(StringAlignmentCenter);
             fmt.SetLineAlignment(StringAlignmentCenter);
@@ -650,14 +704,14 @@ static void draw_panel(Graphics& g, Overlay* o) {
     path.AddArc(r.X, r.Y + r.Height - rad * 2, rad * 2, rad * 2, 90, 90);
     path.CloseFigure();
 
-    SolidBrush bg(Color(245, 32, 32, 32));
+    SolidBrush bg(Color(255, 252, 252, 252));
     g.FillPath(&bg, &path);
-    Pen border(Color(38, 255, 255, 255), 1.0f);
+    Pen border(Color(255, 226, 226, 226), 1.0f);
     g.DrawPath(&border, &path);
 
     // 标题
     Font tf(FONT_UI(), SF(13.0f), FontStyleBold, UnitPixel);
-    SolidBrush white(Color(255, 240, 240, 240));
+    SolidBrush white(Color(255, 26, 26, 26));
     g.DrawString(o->panelTitle.c_str(), -1, &tf, PointF(r.X + SF(12.0f), r.Y + SF(9.0f)), nullptr, &white);
 
     // 正文
@@ -667,16 +721,16 @@ static void draw_panel(Graphics& g, Overlay* o) {
     g.SetClip(body);
     if (o->panel == PM_LOADING) {
         Font f(FONT_UI(), SF(13.0f), FontStyleRegular, UnitPixel);
-        SolidBrush dim(Color(255, 150, 150, 150));
+        SolidBrush dim(Color(255, 140, 140, 140));
         g.DrawString(L"正在处理…", -1, &f, PointF(body.X, body.Y), nullptr, &dim);
     } else if (o->panel == PM_ERROR) {
         Font f(FONT_UI(), SF(13.0f), FontStyleRegular, UnitPixel);
-        SolidBrush red(Color(255, 240, 120, 120));
+        SolidBrush red(Color(255, 220, 60, 60));
         g.DrawString(o->panelBody.c_str(), -1, &f,
                      RectF(body.X, body.Y, body.Width, body.Height + SF(400.0f)), nullptr, &red);
     } else {
         Font f(FONT_UI(), SF(14.0f), FontStyleRegular, UnitPixel);
-        SolidBrush fg(Color(255, 228, 228, 228));
+        SolidBrush fg(Color(255, 51, 51, 51));
         RectF layout(body.X, body.Y - o->panelScroll, body.Width, body.Height + SF(4000.0f));
         g.DrawString(panel_current_text(o), -1, &f, layout, nullptr, &fg);
     }
@@ -695,7 +749,7 @@ static void draw_panel(Graphics& g, Overlay* o) {
             float maxScroll = measure.Height - body.Height;
             float t = maxScroll > 0 ? o->panelScroll / maxScroll : 0;
             float ty = body.Y + (trackH - thumbH) * t;
-            SolidBrush thumb(Color(70, 255, 255, 255));
+            SolidBrush thumb(Color(90, 0, 0, 0));
             g.FillRectangle(&thumb, RectF(r.X + r.Width - SF(5.0f), ty, SF(3.0f), thumbH));
         }
     }
@@ -709,8 +763,8 @@ static void draw_panel(Graphics& g, Overlay* o) {
         bool hover = (o->panelBtnHover == i);
         bool primary = (i == 1);
         Color fill = primary ? Color(255, 7, 193, 96)
-                             : (hover ? Color(255, 58, 58, 58) : Color(255, 46, 46, 46));
-        if (primary && !hover) fill = Color(255, 7, 160, 80);
+                             : (hover ? Color(255, 232, 232, 232) : Color(255, 243, 243, 243));
+        if (primary && hover) fill = Color(255, 6, 173, 86);
         SolidBrush br(fill);
         GraphicsPath bp;
         float rr = SF(6.0f);
@@ -722,7 +776,7 @@ static void draw_panel(Graphics& g, Overlay* o) {
         g.FillPath(&br, &bp);
 
         Font bf(FONT_UI(), SF(12.5f), FontStyleRegular, UnitPixel);
-        SolidBrush txt(Color(255, 255, 255, 255));
+        SolidBrush txt(primary ? Color(255, 255, 255, 255) : Color(255, 76, 76, 76));
         StringFormat cf;
         cf.SetAlignment(StringAlignmentCenter);
         cf.SetLineAlignment(StringAlignmentCenter);
@@ -1492,6 +1546,7 @@ static LRESULT CALLBACK ov_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             case T_COPY:   do_copy(o); break;
             case T_PIN:    do_pin(o); break;
             case T_CANCEL: PostMessageW(h, WM_CLOSE, 0, 0); break;
+            case T_CONFIRM: do_copy(o); break;
             case T_OCR:    start_ocr(o, false); break;
             case T_TRANS:  start_translate(o); break;
             case T_COLOR:  cycle_color(o); break;

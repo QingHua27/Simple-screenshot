@@ -8,6 +8,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tbgeom import width as tb_width, center as tb_center
+
 EXE = r"D:\项目\截图工具\cpp\build\JianJie.exe"
 LOG = os.path.join(os.environ["LOCALAPPDATA"], "JianJie", "app.log")
 u32 = ctypes.windll.user32
@@ -97,9 +100,9 @@ def main():
         hotkey(hk)
         time.sleep(0.9)
         drag(x0, y0, x1, y1)
-        tbx = (x0 + x1) // 2 - 281
+        tbx = (x0 + x1) // 2 - tb_width() // 2
         tby = y1 + 8
-        click(tbx + 281, tby + 24)     # 提取文字
+        click(*tb_center("ocr", tbx, tby))     # 提取文字
         time.sleep(1.8)
         if not alive(proc):
             print("第 %d 轮 OCR 后崩溃（选区 %s），exit=%s" % (i + 1, (x0, y0, x1, y1), proc.returncode))

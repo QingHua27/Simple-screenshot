@@ -15,7 +15,7 @@
 #pragma comment(lib, "shcore.lib")
 
 #define APP_NAME    L"简截"
-#define APP_VERSION L"1.0.2"
+#define APP_VERSION L"1.0.3"
 
 // 与 src/app.rc 里的 IDI_APP 保持一致
 #define IDI_APP 101

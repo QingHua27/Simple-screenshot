@@ -1,5 +1,10 @@
 @echo off
 setlocal
+rem ---------------------------------------------------------------------------
+rem Keep this file ASCII-only. cmd.exe parses .bat in the OEM codepage (936
+rem here), so a UTF-8 CJK comment can end on a byte that swallows the CRLF and
+rem silently eats the next command. That is exactly how the rc step broke once.
+rem ---------------------------------------------------------------------------
 set "MSVC=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.51.36231"
 set "SDK=C:\Program Files (x86)\Windows Kits\10"
 set "SDKV=10.0.26100.0"
@@ -11,17 +16,22 @@ set "LIB=%MSVC%\lib\x64;%SDK%\Lib\%SDKV%\ucrt\x64;%SDK%\Lib\%SDKV%\um\x64"
 cd /d "%~dp0"
 if not exist build mkdir build
 
-rem 资源（图标 + 版本信息）。rc.exe 的相对路径以 .rc 所在目录为基准，
-rem 所以 app.rc 里写的是 ../assets/icon.ico
+rem Icon + version info. rc.exe resolves relative paths against the .rc file's
+rem own directory, which is why app.rc points at ../assets/icon.ico
+if exist build\app.res del /q build\app.res
 rc /nologo /fo build\app.res src\app.rc
 if errorlevel 1 (
     echo RC_FAILED=%ERRORLEVEL%
     exit /b 1
 )
+if not exist build\app.res (
+    echo RC_NO_OUTPUT
+    exit /b 1
+)
 
-rem /EHa：让 catch(...) 也能接住访问违例等 SEH 异常。
-rem OCR / 翻译跑在工作线程里，未捕获的异常会直接 std::terminate（表现为闪退），
-rem 用 /EHa 可以把这类崩溃降级成面板上的一条错误提示。
+rem /EHa so catch(...) also traps SEH (access violations). OCR and translation
+rem run on worker threads, where an uncaught exception means std::terminate --
+rem i.e. the process just disappears. /EHa downgrades that to an error panel.
 cl /nologo /std:c++20 /EHa /O2 /MT /utf-8 /W3 /DUNICODE /D_UNICODE ^
    /Fo:build\ /Fd:build\ ^
    src\main.cpp src\overlay.cpp src\annotate.cpp src\capture.cpp ^

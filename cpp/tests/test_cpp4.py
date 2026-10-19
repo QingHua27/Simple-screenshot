@@ -8,6 +8,9 @@ from ctypes import wintypes
 
 from PIL import ImageGrab
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tbgeom import width as tb_width, center as tb_center
+
 EXE = r"D:\项目\截图工具\cpp\build\JianJie.exe"
 LOG = os.path.join(os.environ["LOCALAPPDATA"], "JianJie", "app.log")
 OUT = r"D:\项目\截图工具\cpp\build"
@@ -131,11 +134,11 @@ def main():
     time.sleep(1.0)
     x0, y0, x1, y1 = 370, 60, 900, 200
     drag(x0, y0, x1, y1)
-    tb_x = (x0 + x1) // 2 - 562 // 2
+    tb_x = (x0 + x1) // 2 - tb_width() // 2
     tb_y = y1 + 8
-    click(tb_x + 281, tb_y + 24)      # 提取文字
+    click(*tb_center("ocr", tb_x, tb_y))      # 提取文字
     time.sleep(2.5)
-    click(tb_x + 317, tb_y + 24)      # 翻译
+    click(*tb_center("trans", tb_x, tb_y))    # 翻译
     time.sleep(6.0)
     ImageGrab.grab().save(os.path.join(OUT, "p3_translate.png"))
     print("翻译截图已保存")

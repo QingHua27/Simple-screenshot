@@ -7,6 +7,9 @@ import time
 
 from PIL import ImageGrab
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tbgeom import width as tb_width, center as tb_center
+
 EXE = r"D:\项目\截图工具\cpp\build\JianJie.exe"
 LOG = os.path.join(os.environ["LOCALAPPDATA"], "JianJie", "app.log")
 OUT = r"D:\项目\截图工具\cpp\build"
@@ -87,19 +90,17 @@ def main():
     print("选区截图已保存")
 
     # 工具条位置：水平居中于选区，位于选区下方 8px
-    tb_w = 562
+    tb_w = tb_width()
     tb_x = (x0 + x1) // 2 - tb_w // 2
     tb_y = y1 + 8
     print("工具条推测位置 = (%d, %d)" % (tb_x, tb_y))
 
-    # 提取文字按钮：第 9 项，x 偏移 263 + 18
-    click(tb_x + 281, tb_y + 24)
+    click(*tb_center("ocr", tb_x, tb_y))          # 提取文字
     print("已点击「提取文字」")
     time.sleep(3.0)
     ImageGrab.grab().save(os.path.join(OUT, "s2_ocr.png"))
 
-    # 矩形标注：第 1 项 x 偏移 6+18
-    click(tb_x + 24, tb_y + 24)
+    click(*tb_center("rect", tb_x, tb_y))         # 矩形
     time.sleep(0.4)
     drag(430, 100, 700, 170)
     time.sleep(0.5)

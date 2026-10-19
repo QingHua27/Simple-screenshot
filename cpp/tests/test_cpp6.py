@@ -12,6 +12,9 @@ import time
 
 from PIL import ImageGrab
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tbgeom import width as tb_width, center as tb_center
+
 EXE = r"D:\项目\截图工具\cpp\build\JianJie.exe"
 LOG = os.path.join(os.environ["LOCALAPPDATA"], "JianJie", "app.log")
 OUT = r"D:\项目\截图工具\cpp\build"
@@ -107,12 +110,12 @@ def main():
     drag(x0, y0, x1, y1)
     time.sleep(0.5)
 
-    tb_w = 562
+    tb_w = tb_width()
     tb_x = (x0 + x1) // 2 - tb_w // 2
     tb_y = y1 + 8
     print("工具条推测位置 = (%d, %d)" % (tb_x, tb_y))
 
-    click(tb_x + 281, tb_y + 24)     # 提取文字
+    click(*tb_center("ocr", tb_x, tb_y))     # 提取文字
     time.sleep(2.5)
 
     line = layout_line()
