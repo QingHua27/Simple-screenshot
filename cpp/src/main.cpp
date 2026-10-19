@@ -15,7 +15,7 @@
 #pragma comment(lib, "shcore.lib")
 
 #define APP_NAME    L"简截"
-#define APP_VERSION L"1.0.1"
+#define APP_VERSION L"1.0.2"
 
 // 与 src/app.rc 里的 IDI_APP 保持一致
 #define IDI_APP 101
@@ -466,8 +466,19 @@ static void init_dpi() {
     logf(L"DPI scale = %.3f", g_scale);
 }
 
+// 兜底：真崩了至少把异常码和地址写进日志，方便下次定位
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
+    if (ep && ep->ExceptionRecord) {
+        logf(L"程序异常 code=0x%08X addr=%p",
+             (unsigned)ep->ExceptionRecord->ExceptionCode,
+             ep->ExceptionRecord->ExceptionAddress);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
     g_hinst = hinst;
+    SetUnhandledExceptionFilter(crash_filter);
 
     Gdiplus::GdiplusStartupInput gsi;
     ULONG_PTR token = 0;

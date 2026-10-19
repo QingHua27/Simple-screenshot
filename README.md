@@ -4,13 +4,13 @@
 冻结屏幕 → 拖拽/单击框选窗口 → 放大镜取色 → 标注 → **提取文字 / 翻译** → 复制 / 保存 / 贴图。
 
 > **直接下载**：[最新版 Release](https://github.com/QingHua27/Simple-screenshot/releases/latest)
-> —— `JianJie-v1.0.1-win64.exe`，397 KB，免安装、免运行库，双击就能用。
+> —— `JianJie-v1.0.2-win64.exe`，435 KB，免安装、免运行库，双击就能用。
 
 有两个版本，功能一致：
 
 | 版本 | 文件 | 体积 | 说明 |
 |---|---|---|---|
-| **原生版（推荐）** | `dist/简截.exe` | **397 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
+| **原生版（推荐）** | `dist/简截.exe` | **435 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
 | Python 版（保留） | `dist/简截-python版.exe` | 49 MB | PySide6 + PyInstaller，源码更易改 |
 
 ![主界面](docs/preview.png)
@@ -141,7 +141,7 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 │  │  └─ app.rc          图标（IDI_APP=101）+ 版本信息，编译成 app.res 后链接
 │  ├─ build_cpp.bat      一键编译（MSVC）
 │  ├─ build/JianJie.exe  编译产物（编译后重命名为 简截.exe）
-│  └─ tests/test_cpp*.py 6 个自动化回归脚本（见「六、自动化测试」）
+│  └─ tests/             7 个自动化回归脚本（见「六、自动化测试」）
 ├─ src/                        Python 版源码
 │  ├─ main.py         入口：托盘、热键、单实例、开机自启、翻译服务配置
 │  ├─ overlay.py      全屏冻结覆盖层：选区 / 放大镜 / 窗口探测 / 标注 / 工具条 / OCR 调度
@@ -183,7 +183,11 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
   托盘 / 任务栏 / 标题栏 / 资源管理器统一用这一份；`make_icon()` 的自绘版本
   降级为兜底（资源缺失时才会用到，并在日志里留一行提示）。
   同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.0.0」。
-- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 397 KB（其中图标占 20 KB）。
+- **稳定性**：OCR / 翻译跑在工作线程里，任何未捕获异常都会 `std::terminate`
+  把进程带走。所以整个工程用 `/EHa` 编译（`catch(...)` 也能接住访问违例这类 SEH），
+  线程体整体包 `try/catch`，`ocr_recognize` 内部加锁串行化 WinRT 调用，
+  面板「正在处理」时忽略重复点击。另挂 `SetUnhandledExceptionFilter` 记录异常码。
+- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 435 KB（其中图标占 20 KB）。
 
 ### Python 版
 
@@ -218,7 +222,7 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 
 ## 六、自动化测试
 
-`cpp/tests/` 下有 6 个脚本，用 Python 模拟真实键鼠操作跑完整流程，全程不需要人工：
+`cpp/tests/` 下有 7 个脚本，用 Python 模拟真实键鼠操作跑完整流程，全程不需要人工：
 
 | 脚本 | 覆盖内容 |
 | --- | --- |
@@ -228,6 +232,7 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 | `test_cpp4.py` | 拖拽中抓放大镜、Ctrl+T 贴图（枚举窗口坐标）、Esc 关贴图、翻译 |
 | `test_cpp5.py` | Ctrl+S → 等保存对话框出现 → 回车，检查目录里新增的 PNG |
 | `test_cpp6.py` | 小选区 + 提取文字，断言结果面板与工具条矩形不相交（回归 v1.0.1 的重叠问题） |
+| `stress_ocr.py` | OCR 压测：6 个不同位置选区循环提取文字，检查进程是否存活（回归 v1.0.2 的闪退） |
 
 ```bash
 C:\Users\Administrator\.workbuddy-ai\binaries\python\envs\default\Scripts\python.exe cpp\tests\test_cpp.py

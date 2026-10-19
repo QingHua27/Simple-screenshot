@@ -19,11 +19,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
-cl /nologo /std:c++20 /EHsc /O2 /MT /utf-8 /W3 /DUNICODE /D_UNICODE ^
+rem /EHa：让 catch(...) 也能接住访问违例等 SEH 异常。
+rem OCR / 翻译跑在工作线程里，未捕获的异常会直接 std::terminate（表现为闪退），
+rem 用 /EHa 可以把这类崩溃降级成面板上的一条错误提示。
+cl /nologo /std:c++20 /EHa /O2 /MT /utf-8 /W3 /DUNICODE /D_UNICODE ^
    /Fo:build\ /Fd:build\ ^
    src\main.cpp src\overlay.cpp src\annotate.cpp src\capture.cpp ^
    src\ocr.cpp src\translate.cpp src\pin.cpp src\output.cpp src\settings.cpp src\common.cpp ^
-   /link /SUBSYSTEM:WINDOWS /OUT:build\JianJie.exe build\app.res ^
+   /link /SUBSYSTEM:WINDOWS /OUT:build\JianJie.exe build\app.res /MAP:build\JianJie.map ^
    user32.lib gdi32.lib gdiplus.lib shell32.lib ole32.lib winhttp.lib dwmapi.lib shcore.lib windowsapp.lib advapi32.lib comdlg32.lib
 
 echo EXITCODE=%ERRORLEVEL%

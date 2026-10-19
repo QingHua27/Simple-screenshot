@@ -1105,6 +1105,10 @@ static void start_ocr(Overlay* o, bool translateToo) {
     int sh = o->sel.bottom - o->sel.top;
     if (sw < 2 || sh < 2) return;
 
+    // 上一个任务还在跑就别再起一个：连点会同时开好几个线程抢 WinRT 的
+    // 进程级激活工厂缓存，正是闪退的诱因之一
+    if (o->panel == PM_LOADING) return;
+
     Bitmap* crop = o->shot.bmp->Clone(o->sel.left, o->sel.top, sw, sh, PixelFormat32bppRGB);
     if (!crop) return;
 
@@ -1116,7 +1120,16 @@ static void start_ocr(Overlay* o, bool translateToo) {
 
     std::thread([hwnd, keep, crop, translateToo, cfg]() {
         std::wstring text, err;
-        bool ok = ocr_recognize(crop, text, err);
+        bool ok = false;
+        // 这里绝不能有异常逃出去：std::thread 里未捕获的异常会直接 std::terminate
+        // （配合 /EHa，连访问违例也会被兜住），表现为「闪退」。
+        try {
+            ok = ocr_recognize(crop, text, err);
+        } catch (...) {
+            ok = false;
+            err = L"识别时发生异常";
+            logf(L"OCR 线程异常（已拦截）");
+        }
         delete crop;
 
         auto* msg = new JobMsg();
@@ -1130,7 +1143,13 @@ static void start_ocr(Overlay* o, bool translateToo) {
             msg->ok = true;
             msg->text = text;
             if (translateToo) {
-                TranslateResult tr = translate_text(text, cfg);
+                TranslateResult tr;
+                try {
+                    tr = translate_text(text, cfg);
+                } catch (...) {
+                    tr.err = L"翻译时发生异常";
+                    logf(L"翻译线程异常（已拦截）");
+                }
                 msg->translated = true;
                 msg->tr = tr;
             }
@@ -1140,6 +1159,7 @@ static void start_ocr(Overlay* o, bool translateToo) {
 }
 
 static void start_translate(Overlay* o) {
+    if (o->panel == PM_LOADING) return;
     std::wstring text = o->showOriginal ? o->panelOriginal : o->panelBody;
     if (text.empty()) {
         start_ocr(o, true);
@@ -1154,7 +1174,14 @@ static void start_translate(Overlay* o) {
     Settings cfg = load_settings();
 
     std::thread([hwnd, keep, text, cfg]() {
-        TranslateResult tr = translate_text(text, cfg);
+        TranslateResult tr;
+        // 同上：任何异常都必须在这里被吃掉，否则进程直接没了
+        try {
+            tr = translate_text(text, cfg);
+        } catch (...) {
+            tr.err = L"翻译时发生异常";
+            logf(L"翻译线程异常（已拦截）");
+        }
         auto* msg = new JobMsg();
         msg->ok = tr.ok();
         msg->err = tr.err;

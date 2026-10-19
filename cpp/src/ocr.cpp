@@ -1,5 +1,7 @@
 #include "ocr.h"
 
+#include <mutex>
+
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -13,6 +15,11 @@ using namespace Windows::Media::Ocr;
 using namespace Windows::Globalization;
 using namespace Windows::Graphics::Imaging;
 using namespace Windows::Storage::Streams;
+
+// WinRT 的激活工厂缓存是进程级共享的，多个 OCR 线程同时首次激活同一类型时
+// 存在竞态（曾出现过缓存的工厂指针失效、调用虚表时 0xc0000005 闪退）。
+// 这里把整段 WinRT 调用串行化，宁可慢一点也不能崩。
+static std::mutex g_ocrLock;
 
 // 中日韩字符 / 全角标点：这些字符之间的空格是 OCR 的噪声
 static bool is_wide(wchar_t c) {
@@ -49,10 +56,15 @@ bool ocr_recognize(Gdiplus::Bitmap* bmp, std::wstring& text, std::wstring& err) 
     err.clear();
     if (!bmp) { err = L"没有可识别的图像"; return false; }
 
+    std::lock_guard<std::mutex> guard(g_ocrLock);
+
     try {
         init_apartment(apartment_type::multi_threaded);
+    } catch (hresult_error const& e) {
+        // 已经初始化过就忽略；但要留痕，COM 状态不对时后面的调用容易出问题
+        logf(L"OCR 线程 COM 初始化返回 0x%08X（继续）", (unsigned)e.code());
     } catch (...) {
-        // 已经初始化过，忽略
+        logf(L"OCR 线程 COM 初始化失败（继续）");
     }
 
     try {
