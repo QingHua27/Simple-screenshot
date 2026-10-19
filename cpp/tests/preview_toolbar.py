@@ -89,7 +89,7 @@ def main():
     tb_y = y1 + 8
     print("工具条 = (%d, %d) %dx%d" % (tb_x, tb_y, TB_W, TB_HEIGHT))
 
-    move(tb_x + 5, tb_y + 5)          # 鼠标挪开，避免 hover 干扰
+    move(tb_x + TB_W + 40, tb_y + 5)   # 鼠标挪到工具条外面，避免 hover 干扰
     time.sleep(0.3)
     img = ImageGrab.grab()
     pad = 6
