@@ -4,13 +4,13 @@
 冻结屏幕 → 拖拽/单击框选窗口 → 放大镜取色 → 标注 → **提取文字 / 翻译** → 复制 / 保存 / 贴图。
 
 > **直接下载**：[最新版 Release](https://github.com/QingHua27/Simple-screenshot/releases/latest)
-> —— `JianJie-v1.0.0-win64.exe`，395 KB，免安装、免运行库，双击就能用。
+> —— `JianJie-v1.0.1-win64.exe`，397 KB，免安装、免运行库，双击就能用。
 
 有两个版本，功能一致：
 
 | 版本 | 文件 | 体积 | 说明 |
 |---|---|---|---|
-| **原生版（推荐）** | `dist/简截.exe` | **395 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
+| **原生版（推荐）** | `dist/简截.exe` | **397 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
 | Python 版（保留） | `dist/简截-python版.exe` | 49 MB | PySide6 + PyInstaller，源码更易改 |
 
 ![主界面](docs/preview.png)
@@ -140,9 +140,8 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 │  │  ├─ common.cpp      字符串 / 日志 / 色板
 │  │  └─ app.rc          图标（IDI_APP=101）+ 版本信息，编译成 app.res 后链接
 │  ├─ build_cpp.bat      一键编译（MSVC）
-│  └─ build/
-│     ├─ JianJie.exe     编译产物（编译后重命名为 简截.exe）
-│     └─ test_cpp*.py    5 个自动化回归脚本（见「六、自动化测试」）
+│  ├─ build/JianJie.exe  编译产物（编译后重命名为 简截.exe）
+│  └─ tests/test_cpp*.py 6 个自动化回归脚本（见「六、自动化测试」）
 ├─ src/                        Python 版源码
 │  ├─ main.py         入口：托盘、热键、单实例、开机自启、翻译服务配置
 │  ├─ overlay.py      全屏冻结覆盖层：选区 / 放大镜 / 窗口探测 / 标注 / 工具条 / OCR 调度
@@ -177,11 +176,14 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
   - 回车 / 退格 / Esc 用 `GetAsyncKeyState` 的「自上次查询以来按下过」位轮询（25ms），
     完全绕开输入法，也不会漏按。
 - **剪贴板**：同时写 `CF_DIB` 和注册格式 `PNG`，粘贴到微信/QQ/Word 都正常。
+- **面板布局**：结果面板不写死位置，而是生成「选区右 / 左 / 下 / 上 / 避开工具条」几个候选，
+  按「出界距离 + 是否压住工具条」打分取最优；侧边候选被工具条压住一点点时优先水平挪开，
+  而不是整块下移。工具条也会反向避让（面板开着时移动选区，它翻到另一侧）。
 - **图标**：`src/app.rc` 把 `assets/icon.ico`（含 16~256 七个尺寸）编成资源，
   托盘 / 任务栏 / 标题栏 / 资源管理器统一用这一份；`make_icon()` 的自绘版本
   降级为兜底（资源缺失时才会用到，并在日志里留一行提示）。
   同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.0.0」。
-- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 395 KB（其中图标占 20 KB）。
+- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 397 KB（其中图标占 20 KB）。
 
 ### Python 版
 
@@ -216,7 +218,7 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 
 ## 六、自动化测试
 
-`cpp/build/` 下有 5 个脚本，用 Python 模拟真实键鼠操作跑完整流程，全程不需要人工：
+`cpp/tests/` 下有 6 个脚本，用 Python 模拟真实键鼠操作跑完整流程，全程不需要人工：
 
 | 脚本 | 覆盖内容 |
 | --- | --- |
@@ -225,9 +227,10 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 | `test_cpp3.py` | 箭头 / 椭圆 / 两个序号 / 文字「Hello」/ 马赛克，然后 Ctrl+C 校验剪贴板尺寸 |
 | `test_cpp4.py` | 拖拽中抓放大镜、Ctrl+T 贴图（枚举窗口坐标）、Esc 关贴图、翻译 |
 | `test_cpp5.py` | Ctrl+S → 等保存对话框出现 → 回车，检查目录里新增的 PNG |
+| `test_cpp6.py` | 小选区 + 提取文字，断言结果面板与工具条矩形不相交（回归 v1.0.1 的重叠问题） |
 
 ```bash
-C:\Users\Administrator\.workbuddy-ai\binaries\python\envs\default\Scripts\python.exe cpp\build\test_cpp.py
+C:\Users\Administrator\.workbuddy-ai\binaries\python\envs\default\Scripts\python.exe cpp\tests\test_cpp.py
 ```
 
 **判定为什么以日志为准**：早期版本用「屏幕亮度变暗」判断覆盖层是否弹出，

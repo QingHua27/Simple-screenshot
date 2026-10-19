@@ -372,6 +372,11 @@ static float toolbar_width() {
     return w;
 }
 
+static bool rect_overlap(const RectF& a, const RectF& b) {
+    return a.X < b.X + b.Width && b.X < a.X + a.Width &&
+           a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
+}
+
 static void place_toolbar(Overlay* o) {
     float w = toolbar_width();
     float h = SF((float)TB_HEIGHT);
@@ -381,6 +386,16 @@ static void place_toolbar(Overlay* o) {
     if (y + h > (float)o->shot.vh - 2) y = (float)o->sel.top - h - SF(8.0f);
     x = std::max(4.0f, std::min(x, (float)o->shot.vw - w - 4.0f));
     y = std::max(4.0f, std::min(y, (float)o->shot.vh - h - 4.0f));
+
+    // 结果面板开着的时候别压上去：先试翻到选区另一侧
+    if (o->panel != PM_HIDDEN && rect_overlap(RectF(x, y, w, h), o->panelRect)) {
+        bool below = (y >= (float)o->sel.bottom);
+        float y2 = below ? (float)o->sel.top - h - SF(8.0f)
+                         : (float)o->sel.bottom + SF(8.0f);
+        y2 = std::max(4.0f, std::min(y2, (float)o->shot.vh - h - 4.0f));
+        if (!rect_overlap(RectF(x, y2, w, h), o->panelRect)) y = y2;
+    }
+
     o->tbX = x;
     o->tbY = y;
 }
@@ -524,21 +539,73 @@ static void draw_toolbar(Graphics& g, Overlay* o) {
 static float panel_width() { return SF(340.0f); }
 
 static void place_panel(Overlay* o) {
-    float w = panel_width();
-    float selH = (float)(o->sel.bottom - o->sel.top);
-    float h = std::max(SF(200.0f), std::min(selH, SF(360.0f)));
+    const float w = panel_width();
+    const float selH = (float)(o->sel.bottom - o->sel.top);
+    const float h = std::max(SF(200.0f), std::min(selH, SF(360.0f)));
+    const float GAP = SF(10.0f), M = SF(6.0f);
+    const float cx = (o->sel.left + o->sel.right) / 2.0f;
 
-    float x = (float)o->sel.right + SF(10.0f);
-    float y = (float)o->sel.top;
-    if (x + w > (float)o->shot.vw - SF(6.0f)) x = (float)o->sel.left - w - SF(10.0f);
-    if (x < SF(6.0f)) {
-        x = std::max(SF(6.0f), std::min((o->sel.left + o->sel.right) / 2.0f - w / 2,
-                                        (float)o->shot.vw - w - SF(6.0f)));
-        y = (float)o->sel.bottom + SF(10.0f);
-        if (y + h > (float)o->shot.vh - SF(6.0f)) y = (float)o->sel.top - h - SF(10.0f);
+    const RectF tb(o->tbX, o->tbY, toolbar_width(), SF((float)TB_HEIGHT));
+    const bool tbOn = o->tbVisible;
+
+    // 候选位置按优先级排列：
+    //   0 选区右侧  1 选区左侧  2 选区下方  3 选区上方
+    //   4 右侧但下移到工具条之下  5 右侧但上移到工具条之上
+    const RectF cand[] = {
+        RectF((float)o->sel.right + GAP,     (float)o->sel.top,          w, h),
+        RectF((float)o->sel.left - w - GAP,  (float)o->sel.top,          w, h),
+        RectF(cx - w / 2,                    (float)o->sel.bottom + GAP, w, h),
+        RectF(cx - w / 2,                    (float)o->sel.top - h - GAP, w, h),
+        RectF((float)o->sel.right + GAP,     tb.Y + tb.Height + GAP,     w, h),
+        RectF((float)o->sel.right + GAP,     tb.Y - h - GAP,             w, h),
+    };
+    const int N_CAND = (int)(sizeof(cand) / sizeof(cand[0]));
+
+    int best = 0;
+    float bestScore = 1e30f;
+    RectF bestRect = cand[0];
+    for (int i = 0; i < N_CAND; ++i) {
+        RectF r = cand[i];
+
+        // 侧边候选只是被工具条压住一点点时，先尝试水平挪到工具条外侧，
+        // 别为了几像素的重叠把整块面板挤到下面去
+        if (tbOn && i < 2 && rect_overlap(r, tb)) {
+            float rightX = tb.X + tb.Width + GAP;
+            float leftX = tb.X - w - GAP;
+            bool fitR = (rightX + w <= (float)o->shot.vw - M);
+            bool fitL = (leftX >= M);
+            if (fitR && fitL) {
+                r.X = (fabsf(rightX - r.X) <= fabsf(leftX - r.X)) ? rightX : leftX;
+            } else if (fitR) {
+                r.X = rightX;
+            } else if (fitL) {
+                r.X = leftX;
+            }
+        }
+
+        // 出界量（像素），优先保证整块面板都在屏幕里
+        float out = 0.0f;
+        if (r.X < M) out += M - r.X;
+        if (r.Y < M) out += M - r.Y;
+        if (r.X + w > (float)o->shot.vw - M) out += r.X + w - ((float)o->shot.vw - M);
+        if (r.Y + h > (float)o->shot.vh - M) out += r.Y + h - ((float)o->shot.vh - M);
+
+        float score = out * 1000.0f + (float)i;          // 出界远大于优先级差异
+        if (tbOn && rect_overlap(r, tb)) score += 5000.0f;  // 压住工具条重罚
+        if (score < bestScore) { bestScore = score; best = i; bestRect = r; }
     }
-    y = std::max(SF(6.0f), std::min(y, (float)o->shot.vh - h - SF(6.0f)));
-    o->panelRect = RectF(x, y, w, h);
+
+    RectF r = bestRect;
+    r.X = std::max(M, std::min(r.X, (float)o->shot.vw - w - M));
+    r.Y = std::max(M, std::min(r.Y, (float)o->shot.vh - h - M));
+    o->panelRect = r;
+
+    if (tbOn) {
+        logf(L"布局 面板(%d,%d %dx%d) 工具条(%d,%d %dx%d) 候选#%d 重叠=%d",
+             (int)r.X, (int)r.Y, (int)r.Width, (int)r.Height,
+             (int)tb.X, (int)tb.Y, (int)tb.Width, (int)tb.Height,
+             best, (int)rect_overlap(r, tb));
+    }
 }
 
 static void panel_buttons(const Overlay* o, RectF out[3], const wchar_t* labels[3], int& count) {
