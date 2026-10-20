@@ -885,6 +885,31 @@ static void draw_magnifier(Graphics& g, Overlay* o, POINT pos) {
     g.DrawString(text, -1, &font, RectF(x, y, w, h), &fmt, &fg);
 }
 
+// 光标准星：圆环 + 四向短线，中间留空给系统十字光标
+static void draw_cursor_marker(Graphics& g, Overlay* o, POINT pos) {
+    const float x = (float)pos.x, y = (float)pos.y;
+
+    // 光标落在工具条/面板上时不画，免得两套图形叠在一起
+    if (o->tbVisible &&
+        ptInRectF(RectF(o->tbX, o->tbY, toolbar_width(), SF((float)TB_HEIGHT)), x, y)) return;
+    if (o->panel != PM_HIDDEN && ptInRectF(o->panelRect, x, y)) return;
+
+    const float ring = SF(15.0f);    // 环半径
+    const float armA = SF(20.0f);    // 短线起点（环外留一点空隙）
+    const float armB = SF(31.0f);    // 短线终点
+
+    Pen halo(Color(155, 0, 0, 0), SF(4.2f));
+    Pen core(Color(250, 255, 255, 255), SF(1.8f));
+    for (int pass = 0; pass < 2; ++pass) {
+        Pen& p = (pass == 0) ? halo : core;
+        g.DrawEllipse(&p, x - ring, y - ring, ring * 2, ring * 2);
+        g.DrawLine(&p, x - armB, y, x - armA, y);
+        g.DrawLine(&p, x + armA, y, x + armB, y);
+        g.DrawLine(&p, x, y - armB, x, y - armA);
+        g.DrawLine(&p, x, y + armA, x, y + armB);
+    }
+}
+
 static void draw_editing(Graphics& g, Overlay* o);
 
 static void paint(Overlay* o) {
@@ -955,18 +980,24 @@ static void paint(Overlay* o) {
                 }
             }
             draw_size_label(g, o->sel, false);
-        } else {
-            if (o->hasHover) {
-                Pen pen(C_GREEN, SF(2.0f));
-                g.DrawRectangle(&pen, (float)o->hoverWin.left + 1, (float)o->hoverWin.top + 1,
-                                (float)(o->hoverWin.right - o->hoverWin.left) - 2,
-                                (float)(o->hoverWin.bottom - o->hoverWin.top) - 2);
-                draw_size_label(g, o->hoverWin, true);
-            }
         }
 
-        if (o->magValid && (o->mode == 1 || o->mode == 2)) {
-            draw_magnifier(g, o, o->magPos);
+        // 光标实时位置：每帧现取，不依赖 WM_MOUSEMOVE ——
+        // 覆盖层刚弹出、鼠标还没动的时候也要能定位。
+        POINT cur = {0, 0};
+        GetCursorPos(&cur);
+        ScreenToClient(o->hwnd, &cur);
+        const bool curIn = (cur.x >= 0 && cur.y >= 0 && cur.x < w && cur.y < h);
+
+        if (curIn && (o->mode == 1 || o->mode == 2)) {
+            draw_magnifier(g, o, cur);
+        }
+
+        // 光标准星：压暗后的桌面上系统十字光标太细，很容易看丢。
+        // 画一个「圆环 + 四向短线」，黑描边打底、白线压面，亮暗背景都看得见，
+        // 中间空着，系统十字光标正好落在环心。
+        if (curIn && o->mode != 1 && o->mode != 2) {
+            draw_cursor_marker(g, o, cur);
         }
 
         draw_panel(g, o);
@@ -1455,8 +1486,6 @@ static LRESULT CALLBACK ov_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         if (!o) return 0;
         POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-        o->magPos = pt;
-        o->magValid = true;
 
         if (o->mode == 1) {
             o->sel = normRECT(o->dragFrom.x, o->dragFrom.y, pt.x, pt.y);
@@ -1528,7 +1557,11 @@ static LRESULT CALLBACK ov_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_MOUSELEAVE:
-        if (o) { o->magValid = false; InvalidateRect(h, nullptr, FALSE); }
+        if (o) {
+            o->hoverItem = -1;
+            o->panelBtnHover = -1;
+            InvalidateRect(h, nullptr, FALSE);
+        }
         return 0;
 
     case WM_LBUTTONDOWN: {

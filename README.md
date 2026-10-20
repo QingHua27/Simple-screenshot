@@ -4,13 +4,13 @@
 冻结屏幕 → 拖拽/单击框选窗口 → 放大镜取色 → 标注 → **提取文字 / 翻译** → 复制 / 保存 / 贴图。
 
 > **直接下载**：[最新版 Release](https://github.com/QingHua27/Simple-screenshot/releases/latest)
-> —— `JianJie-v1.0.3-win64.exe`，435 KB，免安装、免运行库，双击就能用。
+> —— `JianJie-v1.0.4-win64.exe`，436 KB，免安装、免运行库，双击就能用。
 
 有两个版本，功能一致：
 
 | 版本 | 文件 | 体积 | 说明 |
 |---|---|---|---|
-| **原生版（推荐）** | `dist/简截.exe` | **435 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
+| **原生版（推荐）** | `dist/简截.exe` | **436 KB** | C++ / Win32 / GDI+，免运行库，启动即开 |
 | Python 版（保留） | `dist/简截-python版.exe` | 49 MB | PySide6 + PyInstaller，源码更易改 |
 
 ![主界面](docs/preview.png)
@@ -187,12 +187,12 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 - **图标**：`src/app.rc` 把 `assets/icon.ico`（含 16~256 七个尺寸）编成资源，
   托盘 / 任务栏 / 标题栏 / 资源管理器统一用这一份；`make_icon()` 的自绘版本
   降级为兜底（资源缺失时才会用到，并在日志里留一行提示）。
-  同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.3.0」。
+  同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.4.0」。
 - **稳定性**：OCR / 翻译跑在工作线程里，任何未捕获异常都会 `std::terminate`
   把进程带走。所以整个工程用 `/EHa` 编译（`catch(...)` 也能接住访问违例这类 SEH），
   线程体整体包 `try/catch`，`ocr_recognize` 内部加锁串行化 WinRT 调用，
   面板「正在处理」时忽略重复点击。另挂 `SetUnhandledExceptionFilter` 记录异常码。
-- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 435 KB（其中图标占 20 KB）。
+- **体积**：`/MT` 静态链接 CRT，不依赖 VC 运行库，单个 exe 436 KB（其中图标占 20 KB）。
 
 ### Python 版
 

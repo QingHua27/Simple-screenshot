@@ -33,8 +33,6 @@ struct Overlay {
     POINT dragFrom = {0, 0};
     RECT selOrigin = {0, 0, 0, 0};
     int edge = 0;               // 1 左 2 右 4 上 8 下
-    POINT magPos = {0, 0};
-    bool magValid = false;
     RECT hoverWin = {0, 0, 0, 0};
     bool hasHover = false;
 
