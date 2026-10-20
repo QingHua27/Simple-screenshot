@@ -885,29 +885,108 @@ static void draw_magnifier(Graphics& g, Overlay* o, POINT pos) {
     g.DrawString(text, -1, &font, RectF(x, y, w, h), &fmt, &fg);
 }
 
-// 光标准星：圆环 + 四向短线，中间留空给系统十字光标
-static void draw_cursor_marker(Graphics& g, Overlay* o, POINT pos) {
-    const float x = (float)pos.x, y = (float)pos.y;
+// ------------------------------------------------------------------ 自定义光标
+// 压暗整屏之后，系统那个细十字光标在花哨的背景上很容易看丢；而十字加圆环的
+// 准星又太抢眼。这里干脆自己画一个蓝色箭头（macOS 风格）做成 HICON 交给
+// SetCursor —— 由系统合成，鼠标移动时零延迟，比每帧在画布上重描跟手得多，
+// 也不会被误画进截图结果里。
+static HICON g_pointer = nullptr;
 
-    // 光标落在工具条/面板上时不画，免得两套图形叠在一起
-    if (o->tbVisible &&
-        ptInRectF(RectF(o->tbX, o->tbY, toolbar_width(), SF((float)TB_HEIGHT)), x, y)) return;
-    if (o->panel != PM_HIDDEN && ptInRectF(o->panelRect, x, y)) return;
+// 箭头轮廓：单位框内的经典指针形状，尖端在左上角。
+// 九个点都是照着参考图逐行量出来的（包围盒 90x128），别随手改。
+static void pointer_path(GraphicsPath& p, float w, float h, float pad) {
+    auto X = [&](float v) { return pad + v * (w - pad * 2); };
+    auto Y = [&](float v) { return pad + v * (h - pad * 2); };
+    p.AddLine(X(0.033f), Y(0.000f), X(0.000f), Y(0.797f));  // 尖端 -> 左边底
+    p.AddLine(X(0.000f), Y(0.797f), X(0.067f), Y(0.813f));  // 头部左下角
+    p.AddLine(X(0.067f), Y(0.813f), X(0.322f), Y(0.664f));  // 尾部缺口
+    p.AddLine(X(0.322f), Y(0.664f), X(0.556f), Y(0.891f));  // 尾巴左沿
+    p.AddLine(X(0.556f), Y(0.891f), X(0.700f), Y(0.992f));  // 尾巴底
+    p.AddLine(X(0.700f), Y(0.992f), X(0.878f), Y(0.891f));  // 尾巴右沿
+    p.AddLine(X(0.878f), Y(0.891f), X(0.644f), Y(0.539f));  // 尾巴根
+    p.AddLine(X(0.644f), Y(0.539f), X(0.989f), Y(0.422f));  // 头部下沿
+    p.CloseFigure();                                        // 右斜边 -> 尖端
+}
 
-    const float ring = SF(15.0f);    // 环半径
-    const float armA = SF(20.0f);    // 短线起点（环外留一点空隙）
-    const float armB = SF(31.0f);    // 短线终点
+static HICON make_pointer_icon() {
+    const float want = SF(33.0f);
+    int h = (int)lround(want);
+    int w = (int)lround(want * 0.70f);
+    if (w < 14) w = 14;
+    if (h < 18) h = 18;
+    const float pad = std::max(1.4f, h * 0.05f);
 
-    Pen halo(Color(155, 0, 0, 0), SF(4.2f));
-    Pen core(Color(250, 255, 255, 255), SF(1.8f));
-    for (int pass = 0; pass < 2; ++pass) {
-        Pen& p = (pass == 0) ? halo : core;
-        g.DrawEllipse(&p, x - ring, y - ring, ring * 2, ring * 2);
-        g.DrawLine(&p, x - armB, y, x - armA, y);
-        g.DrawLine(&p, x + armA, y, x + armB, y);
-        g.DrawLine(&p, x, y - armB, x, y - armA);
-        g.DrawLine(&p, x, y + armA, x, y + armB);
+    BITMAPV5HEADER bi = {};
+    bi.bV5Size = sizeof(bi);
+    bi.bV5Width = w;
+    bi.bV5Height = -h;              // 负高度 = 自上而下，与 GDI+ 的行序一致
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_BITFIELDS;
+    bi.bV5RedMask = 0x00FF0000;
+    bi.bV5GreenMask = 0x0000FF00;
+    bi.bV5BlueMask = 0x000000FF;
+    bi.bV5AlphaMask = 0xFF000000;
+
+    void* bits = nullptr;
+    HDC screen = GetDC(nullptr);
+    HBITMAP color = CreateDIBSection(screen, (BITMAPINFO*)&bi, DIB_RGB_COLORS,
+                                     &bits, nullptr, 0);
+    ReleaseDC(nullptr, screen);
+    if (!color || !bits) {
+        if (color) DeleteObject(color);
+        return nullptr;
     }
+
+    {
+        Bitmap bmp(w, h, w * 4, PixelFormat32bppARGB, (BYTE*)bits);
+        Graphics g(&bmp);
+        g.SetSmoothingMode(SmoothingModeAntiAlias);
+        g.SetPixelOffsetMode(PixelOffsetModeHalf);
+        g.Clear(Color(0, 0, 0, 0));
+
+        GraphicsPath path;
+        pointer_path(path, (float)w, (float)h, pad);
+
+        // 左上偏亮、右下偏深，跟参考图的三段渐变对齐
+        LinearGradientBrush fill(PointF(0.0f, 0.0f), PointF((REAL)w, (REAL)h),
+                                 Color(255, 118, 204, 255), Color(255, 0, 135, 203));
+        Color stops[3] = {
+            Color(255, 118, 204, 255),
+            Color(255, 0, 170, 255),
+            Color(255, 0, 135, 203),
+        };
+        REAL pos[3] = { 0.0f, 0.55f, 1.0f };
+        fill.SetInterpolationColors(stops, pos, 3);
+        g.FillPath(&fill, &path);
+
+        // 极淡的深蓝描边：浅色背景上也能压住边缘，但不至于变成一圈黑边
+        Pen edge(Color(105, 0, 92, 140), std::max(1.2f, h * 0.042f));
+        edge.SetLineJoin(LineJoinRound);
+        g.DrawPath(&edge, &path);
+    }
+
+    // AND 掩码全 0：透明交给 alpha 通道，32 位光标的标准做法
+    const int mstride = ((w + 15) / 16) * 2;
+    std::vector<BYTE> zero((size_t)mstride * h, 0);
+    HBITMAP mask = CreateBitmap(w, h, 1, 1, zero.data());
+
+    ICONINFO ii = {};
+    ii.fIcon = FALSE;
+    ii.xHotspot = (UINT)lround(pad + 0.033f * (w - pad * 2));
+    ii.yHotspot = (UINT)lround(pad);
+    ii.hbmMask = mask;
+    ii.hbmColor = color;
+    HICON ic = CreateIconIndirect(&ii);
+
+    if (mask) DeleteObject(mask);
+    DeleteObject(color);
+    return ic;
+}
+
+static HICON pointer_cursor() {
+    if (!g_pointer) g_pointer = make_pointer_icon();
+    return g_pointer;
 }
 
 static void draw_editing(Graphics& g, Overlay* o);
@@ -991,13 +1070,6 @@ static void paint(Overlay* o) {
 
         if (curIn && (o->mode == 1 || o->mode == 2)) {
             draw_magnifier(g, o, cur);
-        }
-
-        // 光标准星：压暗后的桌面上系统十字光标太细，很容易看丢。
-        // 画一个「圆环 + 四向短线」，黑描边打底、白线压面，亮暗背景都看得见，
-        // 中间空着，系统十字光标正好落在环心。
-        if (curIn && o->mode != 1 && o->mode != 2) {
-            draw_cursor_marker(g, o, cur);
         }
 
         draw_panel(g, o);
@@ -1362,21 +1434,53 @@ static void begin_select(Overlay* o, POINT pt) {
     o->mosaic = nullptr;
 }
 
+// 拖拽中的边掩码 -> 对应的缩放光标（1 左 2 右 4 上 8 下）
+static LPCWSTR edge_cursor(int mask) {
+    switch (mask) {
+    case 1 | 4: return IDC_SIZENWSE;
+    case 2 | 4: return IDC_SIZENESW;
+    case 2 | 8: return IDC_SIZENWSE;
+    case 1 | 8: return IDC_SIZENESW;
+    case 4:
+    case 8: return IDC_SIZENS;
+    case 1:
+    case 2: return IDC_SIZEWE;
+    default: return IDC_ARROW;
+    }
+}
+
 static void set_cursor_for(Overlay* o, POINT pt) {
-    if (!o->hasSel) {
-        SetCursor(LoadCursorW(nullptr, IDC_CROSS));
+    // 拖拽中不能再用 hover 判定：光标一直压在刚拖出来的角上，会被认成
+    // 控制点，缩放箭头就甩不掉了。先按当前状态分流。
+    switch (o->mode) {
+    case 1:                                   // 拉新选区：箭头尖端就是落点
+        SetCursor(pointer_cursor());
         return;
-    }
-    int h = (o->tool == T_NONE) ? handle_at(o, pt) : -1;
-    if (h >= 0) {
-        SetCursor(LoadCursorW(nullptr, HANDLE_CURSORS[h]));
+    case 2:                                   // 拖控制点
+        SetCursor(LoadCursorW(nullptr, edge_cursor(o->edge)));
         return;
-    }
-    if (ptInRect(o->sel, pt.x, pt.y)) {
-        SetCursor(LoadCursorW(nullptr, o->tool == T_NONE ? IDC_SIZEALL : IDC_CROSS));
+    case 3:                                   // 拖动整个选区
+        SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
         return;
+    default:
+        break;
     }
-    SetCursor(LoadCursorW(nullptr, IDC_CROSS));
+
+    // 空闲 / 绘制状态：控制点和选区内部保留系统光标，方向感比箭头清楚
+    if (o->hasSel && o->tool == T_NONE) {
+        int h = handle_at(o, pt);
+        if (h >= 0) {
+            SetCursor(LoadCursorW(nullptr, HANDLE_CURSORS[h]));
+            return;
+        }
+        if (ptInRect(o->sel, pt.x, pt.y)) {
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+            return;
+        }
+    }
+
+    HICON pc = pointer_cursor();
+    SetCursor(pc ? pc : LoadCursorW(nullptr, IDC_ARROW));
 }
 
 // ------------------------------------------------------------------ 窗口过程
@@ -1853,7 +1957,7 @@ static void ensure_class() {
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = ov_proc;
     wc.hInstance = GetModuleHandleW(nullptr);
-    wc.hCursor = LoadCursorW(nullptr, IDC_CROSS);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = OV_CLASS;
     RegisterClassExW(&wc);
     done = true;
@@ -1890,6 +1994,7 @@ bool overlay_open() {
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
+    SetCursor(pointer_cursor());   // 覆盖层一出来就是蓝色箭头，不用等鼠标动
     force_foreground(hwnd);
     HWND fg = GetForegroundWindow();
     logf(L"覆盖层已显示 fg=%p hwnd=%p match=%d", fg, hwnd, (int)(fg == hwnd));
@@ -1903,6 +2008,7 @@ void overlay_destroy() {
     g_ov.reset();
     if (g_backBuf) { DeleteObject(g_backBuf); g_backBuf = nullptr; }
     if (g_backDC) { DeleteDC(g_backDC); g_backDC = nullptr; }
+    if (g_pointer) { DestroyIcon(g_pointer); g_pointer = nullptr; }
     g_bw = g_bh = 0;
 }
 
