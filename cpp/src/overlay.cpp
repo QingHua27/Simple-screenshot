@@ -2008,7 +2008,12 @@ void overlay_destroy() {
     g_ov.reset();
     if (g_backBuf) { DeleteObject(g_backBuf); g_backBuf = nullptr; }
     if (g_backDC) { DeleteDC(g_backDC); g_backDC = nullptr; }
-    if (g_pointer) { DestroyIcon(g_pointer); g_pointer = nullptr; }
+    if (g_pointer) {
+        // 先把光标换回系统箭头再销毁，否则屏幕上可能挂着一个已经释放的句柄
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        DestroyIcon(g_pointer);
+        g_pointer = nullptr;
+    }
     g_bw = g_bh = 0;
 }
 
