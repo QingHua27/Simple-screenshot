@@ -909,12 +909,13 @@ static void pointer_path(GraphicsPath& p, float w, float h, float pad) {
 }
 
 static HICON make_pointer_icon() {
-    const float want = SF(33.0f);
+    // 基准 33px 再缩 20%（用户觉得原来偏大），高 DPI 下同比放大
+    const float want = SF(33.0f * 0.8f);
     int h = (int)lround(want);
     int w = (int)lround(want * 0.70f);
-    if (w < 14) w = 14;
-    if (h < 18) h = 18;
-    const float pad = std::max(1.4f, h * 0.05f);
+    if (w < 12) w = 12;
+    if (h < 15) h = 15;
+    const float pad = std::max(1.2f, h * 0.05f);
 
     BITMAPV5HEADER bi = {};
     bi.bV5Size = sizeof(bi);

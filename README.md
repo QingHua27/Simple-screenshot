@@ -4,7 +4,7 @@
 冻结屏幕 → 拖拽/单击框选窗口 → 放大镜取色 → 标注 → **提取文字 / 翻译** → 复制 / 保存 / 贴图。
 
 > **直接下载**：[最新版 Release](https://github.com/QingHua27/Simple-screenshot/releases/latest)
-> —— `JianJie-v1.0.4-win64.exe`，439 KB，免安装、免运行库，双击就能用。
+> —— `JianJie-v1.0.5-win64.exe`，439 KB，免安装、免运行库，双击就能用。
 
 有两个版本，功能一致：
 
@@ -188,7 +188,7 @@ WeChatMain             ← 唯一的业务入口，代码已被虚拟化
 - **图标**：`src/app.rc` 把 `assets/icon.ico`（含 16~256 七个尺寸）编成资源，
   托盘 / 任务栏 / 标题栏 / 资源管理器统一用这一份；`make_icon()` 的自绘版本
   降级为兜底（资源缺失时才会用到，并在日志里留一行提示）。
-  同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.4.0」。
+  同一个 `.rc` 里还带 `VERSIONINFO`，右键属性能看到「简截 - 微信风格截图工具 1.0.5.0」。
 - **稳定性**：OCR / 翻译跑在工作线程里，任何未捕获异常都会 `std::terminate`
   把进程带走。所以整个工程用 `/EHa` 编译（`catch(...)` 也能接住访问违例这类 SEH），
   线程体整体包 `try/catch`，`ocr_recognize` 内部加锁串行化 WinRT 调用，
